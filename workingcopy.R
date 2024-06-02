@@ -37,7 +37,7 @@ library(data.table)
 
 #library(LDdiag) 
 #also removed from CRAN repository. devtools required to install it from the archives
-devtools::install_version("LDdiag","0.1")
+#devtools::install_version("LDdiag","0.1")
 library(LDdiag)
 
 
@@ -685,6 +685,11 @@ pregibon.glm(m4_glm_2019)
 m4_glm_species <- glm(Annual_Growth_Rate ~ Species, family = gaussian(), data = fishData)
 summary(m4_glm_species)
 
+#Diagnostics
+# testing for Homoscedasticity and Normality
+plot(simulateResiduals(m4_glm_species))
+## Goodness of fit testing via pregibon
+pregibon.glm(m4_glm_species)
 
 #########################################################################
 # Model 5: PCA to reduce dimension
@@ -747,7 +752,7 @@ pregibon.lm(m5_pca)
 
 
 #########################################################################
-# Model 6: PCA
+# Model 6: GLM with PCA
 
 # Fitting the model with principal components
 m6_pca <- glm(Annual_Growth_Rate ~ PC1 + PC2 + PC3 + Species, data = fishData_pca)
@@ -885,9 +890,20 @@ comparison_results <- rbind(
 
 print(comparison_results)
 
+#########################################################################
+# Extracting all model equations
 
+extract_eq(m1_fullDat)
+extract_eq(m1_fishDat)
+extract_eq(m2_transformed)
+extract_eq(m3_interaction)
+extract_eq(m4_glm)
+extract_eq(m4_glm_2019)
+extract_eq(m4_glm_2020)
+extract_eq(m4_glm_2021)
+extract_eq(m4_glm_species)
+extract_eq(m5_pca)
+extract_eq(m6_pca)
+extract_eq(m7_bayesian)
 
-# Random Forest
-install.packages("randomForest")
-library(randomForest)
 
