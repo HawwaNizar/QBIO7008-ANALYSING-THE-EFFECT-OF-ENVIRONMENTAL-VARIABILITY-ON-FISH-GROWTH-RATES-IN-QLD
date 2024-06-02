@@ -1,0 +1,20 @@
+---
+title: "equations"
+author: "Hawwa Nizar"
+date: "2024-06-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+$$
+\operatorname{Annual\_Growth\_Rate} = \alpha + \beta_{1}(\operatorname{mean\_StreamLvl\_m}) + \beta_{2}(\operatorname{mean\_StreamFlow\_megalitre}) + \beta_{3}(\operatorname{Catchment\_area\_sq\_kms}) + \beta_{4}(\operatorname{Stream\_Distance\_from\_station\_to\_mouth\_km}) + \beta_{5}(\operatorname{MeanTemp\_degC\_2021}) + \beta_{6}(\operatorname{LongestZeroFlow\_2021}) + \beta_{7}(\operatorname{Species}_{\operatorname{CC}}) + \beta_{8}(\operatorname{Species}_{\operatorname{GP}}) + \epsilon
+$$
