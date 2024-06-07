@@ -34,6 +34,7 @@ library(gridExtra)
 library(brms)
 library(lubridate)
 library(data.table)
+library(ggrepel)
 
 #library(LDdiag) 
 #also removed from CRAN repository. devtools required to install it from the archives
@@ -50,7 +51,6 @@ library(LDdiag)
 d1 <- read_excel("./Data/Bonybream.xlsx")
 d2 <- read_excel("./Data/Carp.xlsx")
 d3 <- read_excel("./Data/Goldenperch.xlsx")
-strmflw <- read_excel("./Data/Streamflow.xlsx")
 Gauges <- read_excel("./Data/Gauges.xlsx")
 
 
@@ -58,42 +58,28 @@ Gauges <- read_excel("./Data/Gauges.xlsx")
 head(d1)
 head(d2)
 head(d3)
-head(strmflw)
 head(Gauges)
 
 ## Merging species datasets to form a combined dataset for all 3 species
 comb_data <- rbind(d1, d2, d3)
 
-## Incorporating environmental data from Power BI into the species dataset (comb_data)
+## Incorporating gauge ID data from Power BI into the species dataset (comb_data)
 
 # Checking the number of unique GaugeID entries
-length(unique(strmflw$GaugeID))
+length(unique(Gauges$GaugeID))
 # 10 entries. So 10 gauges for 11 sites
 # There are 2 gauges for Site 7. 
 # Excluding records with GaugeID '422209A' , the second gauge
 Gauges <- Gauges %>%
   filter(!(GaugeID == "422209A" & SiteID == 7))
 
+# Checking for columns which can be used in merge
+head(Gauges)
+head(comb_data)
 
-# Changing 'GaugeID' columns from both strmflw and Gauges datasets to the same type
-# Because this column will be used to anchor the merging
-strmflw$GaugeID <- as.character(strmflw$GaugeID)
-Gauges$GaugeID <- as.character(Gauges$GaugeID)
-
-# Merging the dataframes using the 'GaugeID' column
-strmflw <- merge(strmflw, Gauges, by = "GaugeID", all.x = TRUE)
-
-# Checking updated strmflw dataset to confirm the merge
-head(strmflw)
-
-# Making sure 'Year' and 'SiteID' columns are of the same type in both strmflw and comb_data datasets
-comb_data$Year <- as.numeric(as.character(comb_data$Year))
-comb_data$SiteID <- as.numeric(as.character(comb_data$SiteID))
-strmflw$Year <- as.numeric(as.character(strmflw$Year))
-strmflw$SiteID <- as.numeric(as.character(strmflw$SiteID))
-
-# Merging the strmflw and comb_data datasets
-full_data <- merge(comb_data, strmflw, by = c("Year", "SiteID"), all.x = TRUE)
+# Merging the comb_data with Gauges dataset based on SiteID
+full_data <- comb_data %>%
+  left_join(Gauges, by = "SiteID")
 
 # Checking the structure and the first few rows of the merged dataset
 str(full_data)
@@ -104,11 +90,204 @@ head(full_data)
 full_data <- full_data %>%
   mutate(FishID_normalized = str_sub(FishID, 1, -4))
 
+# Adding year in which each fish would have been 2 years old, 1 year old and spawned
+full_data <- full_data %>%
+  mutate(
+    Year_2yo = Year - Age + 2,
+    Year_1yo = Year - Age + 1,
+    Year_Spawning = Year - Age
+  )
+
+
 
 #########################################################################
 ## Incorporating environmental data from WMIP into full_data
 
+# Loading required packages and setting directory to folder containing WMIP data
+library(readr)
+library(dplyr)
+library(lubridate)
 
+WMIP_directory <- "./Data/WMIP/"
+
+# Listing all filenames within directory
+file_names <- list.files(path=WMIP_directory, pattern = "\\.csv$", full.names = TRUE)
+
+# Creating a list to store data frames
+data_frames <- list()
+
+# Loop that goes through each file in WMIP directory
+for (file_path in file_names) {
+  gauge_id <- gsub(".*/|_flow\\.csv$", "", file_path)
+  
+  # Reading CSV files, skipping the first 3 rows, and reading all columns as character
+  df <- read_csv(file_path, skip = 3, col_types = cols(.default = col_character()))
+  
+  # Renaming specific columns based on their positions
+  colnames(df)[1] <- "Date"
+  colnames(df)[2] <- "Mean_Level_m"
+  colnames(df)[4] <- "Min_Level_m"
+  colnames(df)[6] <- "Max_Level_m"
+  colnames(df)[8] <- "Mean_Discharge_Ml"
+  colnames(df)[10] <- "Min__Discharge_Ml"
+  colnames(df)[12] <- "Max__Discharge_Ml"
+  colnames(df)[14] <- "Max_Vol_Ml"
+  
+  # Converting necessary columns to appropriate types
+  df <- df %>%
+    mutate(
+      Mean_Level_m = as.numeric(Mean_Level_m),
+      Min_Level_m = as.numeric(Min_Level_m),
+      Max_Level_m = as.numeric(Max_Level_m),
+      Mean_Discharge_Ml = as.numeric(Mean_Discharge_Ml),
+      Min__Discharge_Ml = as.numeric(Min__Discharge_Ml),
+      Max__Discharge_Ml = as.numeric(Max__Discharge_Ml),
+      Max_Vol_Ml = as.numeric(Max_Vol_Ml),
+      GaugeID = gauge_id
+    ) %>%
+    dplyr::select(Date, Mean_Level_m, Min_Level_m, Max_Level_m, Mean_Discharge_Ml, Min__Discharge_Ml, Max__Discharge_Ml, Max_Vol_Ml, GaugeID)
+  
+  data_frames[[gauge_id]] <- df
+}
+
+
+# Combine all data frames into one
+comb_flow <- bind_rows(data_frames)
+
+# Remove rows where all the data are NA
+comb_flow <- comb_flow %>% filter(!if_all(everything(), is.na))
+# Remove rows where Date column starts with "Data use licence:" or "Glossary of terms"
+comb_flow <- comb_flow %>%
+  filter(
+    !str_detect(Date, "^Data use licence:"),
+    !str_detect(Date, "^Glossary of terms")
+  )
+
+# Removinge rows where Date is NA
+comb_flow <- comb_flow %>% filter(!is.na(Date))
+
+# Remove "00:00" from the Date column and parse the date
+# Also changing the name as a safety measure, in case changes need to be reversed on the spot
+comb_flow1 <- comb_flow %>%
+  mutate(
+    Date = str_remove(Date, " 00:00$"),  # Remove the "00:00" part
+    Date = parse_date_time(Date, orders = c("Ymd", "Ymd HMS", "dmy", "dmy HMS"))
+  )
+
+# Adding an 'Year' column, extracted from the Date column
+comb_flow1 <- comb_flow1 %>%
+  mutate(Year = year(Date))
+
+# Display the combined data frame to verify the result
+head(comb_flow1)
+
+# Quick check to make sure data from all years have been incorporated
+count_2021 <- comb_flow1 %>% filter(Year == 2021) %>% nrow()
+print(count_2021)
+# 8 gauges * 365 days = 2920 records for each year
+# looks good
+
+
+###########################################################
+library(dplyr)
+library(data.table)
+
+
+# Summarising full_data dataset to make unique rows for each GaugeID
+cease_to_flow <- full_data %>% 
+  dplyr::select(GaugeID, Cease_to_flow_level) %>%
+  distinct()
+
+# Merging cease_to_flow information with `comb_flow1`
+comb_flow1 <- comb_flow1 %>%
+  left_join(cease_to_flow, by = "GaugeID")
+
+# Calculating the number of zero flow days per year for each gauge
+zero_flow_days <- comb_flow1 %>%
+  group_by(GaugeID, Year) %>%
+  summarize(
+    ZeroFlowDays = sum(Mean_Level_m <= Cease_to_flow_level, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Converting dataset to a data.table
+setDT(comb_flow1)
+
+# Adding a logical column to identify no-flow days
+comb_flow1[, `:=`(No_flow = Mean_Level_m <= Cease_to_flow_level)]
+
+# Calculating the longest no-flow spell by gauge and year
+longest_no_flow_spell <- comb_flow1[, {
+  no_flow_days <- .SD[No_flow == TRUE, .(Date)]
+  if (nrow(no_flow_days) > 0) {
+    no_flow_days[, diff_date := c(1, diff(Date))]
+    no_flow_days[, spell_id := cumsum(diff_date > 1)]
+    spell_lengths <- no_flow_days[, .(length = .N), by = spell_id][, max(length, na.rm = TRUE)]
+  } else {
+    spell_lengths = 0
+  }
+  .(LongestZeroFlow = as.double(spell_lengths))
+}, by = .(GaugeID, Year)]
+
+# Calculating zero flow days and longest no flow spell for Year_1yo
+zero_flow_days_1yo <- comb_flow1 %>%
+  group_by(GaugeID, Year) %>%
+  summarize(
+    ZeroFlowDays = sum(Mean_Level_m <= Cease_to_flow_level, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+longest_no_flow_spell_1yo <- comb_flow1[, {
+  no_flow_days <- .SD[No_flow == TRUE, .(Date)]
+  if (nrow(no_flow_days) > 0) {
+    no_flow_days[, diff_date := c(1, diff(Date))]
+    no_flow_days[, spell_id := cumsum(diff_date > 1)]
+    spell_lengths <- no_flow_days[, .(length = .N), by = spell_id][, max(length, na.rm = TRUE)]
+  } else {
+    spell_lengths = 0
+  }
+  .(LongestZeroFlow = as.double(spell_lengths))
+}, by = .(GaugeID, Year)]
+
+# Calculating zero flow days and longest no flow spell for Year_Spawning
+zero_flow_days_spawning <- comb_flow1 %>%
+  group_by(GaugeID, Year) %>%
+  summarize(
+    ZeroFlowDays = sum(Mean_Level_m <= Cease_to_flow_level, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+longest_no_flow_spell_spawning <- comb_flow1[, {
+  no_flow_days <- .SD[No_flow == TRUE, .(Date)]
+  if (nrow(no_flow_days) > 0) {
+    no_flow_days[, diff_date := c(1, diff(Date))]
+    no_flow_days[, spell_id := cumsum(diff_date > 1)]
+    spell_lengths <- no_flow_days[, .(length = .N), by = spell_id][, max(length, na.rm = TRUE)]
+  } else {
+    spell_lengths = 0
+  }
+  .(LongestZeroFlow = as.double(spell_lengths))
+}, by = .(GaugeID, Year)]
+
+# Merging zero flow days and longest no flow spell into full_data
+full_data <- full_data %>%
+  left_join(zero_flow_days, by = c("GaugeID" = "GaugeID", "Year_2yo" = "Year"), suffix = c("", "_2yo")) %>%
+  left_join(longest_no_flow_spell, by = c("GaugeID" = "GaugeID", "Year_2yo" = "Year"), suffix = c("", "_2yo")) %>%
+  left_join(zero_flow_days_1yo, by = c("GaugeID" = "GaugeID", "Year_1yo" = "Year"), suffix = c("", "_1yo")) %>%
+  left_join(longest_no_flow_spell_1yo, by = c("GaugeID" = "GaugeID", "Year_1yo" = "Year"), suffix = c("", "_1yo")) %>%
+  left_join(zero_flow_days_spawning, by = c("GaugeID" = "GaugeID", "Year_Spawning" = "Year"), suffix = c("", "_spawning")) %>%
+  left_join(longest_no_flow_spell_spawning, by = c("GaugeID" = "GaugeID", "Year_Spawning" = "Year"), suffix = c("", "_spawning"))
+
+# Display the first few rows of the updated full_data
+head(full_data)
+
+
+
+
+
+
+
+########################################################
 # Loading required packages and setting directory to folder containing WMIP data
 library(readr)
 library(dplyr)
@@ -375,6 +554,10 @@ full_data_final <- full_data %>%
     AvgEvap_pan,
     AvgDailyRain
   )
+
+# Adding year in which each fish would have been 2 years old
+full_data$Year_2yo <- full_data$Year - full_data$Age + 2
+
 
 ## Filtering data to only include fish in the correct age range (2yo in 2021)
 fishData <- full_data_final %>%
@@ -760,10 +943,45 @@ summary(m6_pca)
 
 # Diagnostics
 plot(simulateResiduals(m6_pca))
-
 pregibon.glm(m6_pca)
 
+# Scree plot
+screeplot(pca, type = "lines", main = "Scree Plot")
 
+
+# Biplot
+# Extract the loadings (eigenvectors)
+loadings <- as.data.frame(pca$rotation)
+loadings$Variable <- rownames(loadings)
+loadings$PC1 <- loadings$PC1 * 5  # Scale the loadings for better visualization
+loadings$PC2 <- loadings$PC2 * 5
+# Extracting the scores (principal component scores)
+scores <- as.data.frame(pca$x)
+scores$Observation <- rownames(scores)
+# Creating biplot
+ggplot() +
+  geom_point(data = scores, aes(x = PC1, y = PC2), color = 'blue', alpha = 0.6) +
+  geom_text_repel(data = scores, aes(x = PC1, y = PC2, label = Observation), size = 3, color = 'blue', max.overlaps = 10) +
+  geom_segment(data = loadings, aes(x = 0, y = 0, xend = PC1, yend = PC2), 
+               arrow = arrow(length = unit(0.2, "cm")), color = "black") +
+  geom_text_repel(data = loadings, aes(x = PC1, y = PC2, label = Variable), size = 3, color = "red", max.overlaps = 10) +
+  ggtitle("Biplot of Principal Components") +
+  theme_minimal() +
+  theme(text = element_text(size = 10))
+
+
+# Loadings plot
+library(ggplot2)
+loadings <- as.data.frame(pca$rotation)
+loadings$Variable <- rownames(loadings)
+
+# Plot for the first two principal components
+ggplot(loadings, aes(x = PC1, y = PC2, label = Variable)) +
+  geom_point() +
+  geom_text(vjust = -0.5, hjust = 0.5) +
+  ggtitle("Loadings Plot") +
+  xlab("PC1") +
+  ylab("PC2")
 
 #########################################################################
 # Model 7: Bayesian GLM
@@ -794,7 +1012,7 @@ plot(m7_bayesian)
 # Posterior predictive checks
 pp_check(m7_bayesian)
 
-
+max(fishData$MeanTemp_degC_2019, na.rm = TRUE)
 #########################################################################
 # Model Comparison 
 
@@ -889,6 +1107,57 @@ comparison_results <- rbind(
 )
 
 print(comparison_results)
+
+#########################################################################
+#Visualising the GLMs
+#########################################################################
+
+# Visualizing the species GLM model with confidence intervals
+# Load necessary libraries
+library(ggplot2)
+
+# Assigning species color 
+species_color <- c("salmon", "grey", "lightblue")
+
+# Ensure Species is a factor and add species_color
+newdat <- data.frame(Species = factor(unique(fishData$Species), levels = unique(fishData$Species)),
+                     Color = species_color)
+
+# Predict values and standard errors
+preds_glm <- predict(m4_glm_species, newdata = newdat, type = "response", se.fit = TRUE)
+
+# Calculate confidence intervals
+newdat$fit <- preds_glm$fit
+newdat$upr <- preds_glm$fit + 1.96 * preds_glm$se.fit
+newdat$lwr <- preds_glm$fit - 1.96 * preds_glm$se.fit
+
+# Plot with ggplot2
+ggplot(newdat, aes(x = Species, y = fit, color = Color)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.2) +
+  labs(x = "Species", y = "Annual Growth Rate", title = "Predicted Annual Growth Rate by Species with 95% CI") +
+  scale_color_identity() + # Use the exact colors provided in the Color column
+  theme_minimal()
+
+
+
+# Visualizing the GLM with PCA components and confidence intervals
+newdat <- data.frame(PC1 = seq(min(fishData_pca$PC1), max(fishData_pca$PC1), length = 100),
+                     PC2 = seq(min(fishData_pca$PC2), max(fishData_pca$PC2), length = 100),
+                     PC3 = seq(min(fishData_pca$PC3), max(fishData_pca$PC3), length = 100),
+                     Species = rep(unique(fishData_pca$Species)[1], 100)) # Using one species for simplicity
+
+preds_glm_pca <- predict(m6_pca, newdata = newdat, type = "response", se.fit = TRUE)
+
+# Calculate confidence intervals
+newdat$fit <- preds_glm_pca$fit
+newdat$upr <- preds_glm_pca$fit + 1.96 * preds_glm_pca$se.fit
+newdat$lwr <- preds_glm_pca$fit - 1.96 * preds_glm_pca$se.fit
+
+# Plot for PC1
+plot(newdat$PC1, newdat$fit, ylim = range(c(newdat$lwr, newdat$upr)), xlab = "PC1", ylab = "Annual Growth Rate", type = "l", col = "red")
+lines(newdat$PC1, newdat$upr, col = "blue", lty = 2)
+lines(newdat$PC1, newdat$lwr, col = "blue", lty = 2)
 
 #########################################################################
 # Extracting all model equations
